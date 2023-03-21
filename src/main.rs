@@ -1,10 +1,11 @@
 use core::time;
 use std::cmp::max;
 use std::collections::HashSet;
+use std::ffi::{OsString, OsStr};
 use std::sync::{Arc, Mutex};
-use std::io::{self, stdout, Write};
+use std::io::{self, Write, Read};
 use std::path::PathBuf;
-use std::thread;
+use std::{thread, fs, error};
 
 use clap::Parser;
 
@@ -65,7 +66,7 @@ fn print_menu(paths: &HashSet<PathBuf>) {
 fn choose_working_dir(paths: &HashSet<PathBuf>) -> Result<PathBuf, io::Error> {
 
     print!("> ");
-    stdout().lock().flush()?;
+    io::stdout().lock().flush()?;
 
     // Get input position
     let mut input = String::new();
@@ -81,15 +82,35 @@ fn choose_working_dir(paths: &HashSet<PathBuf>) -> Result<PathBuf, io::Error> {
         .find_map(|p| match p.0 == chose_number {
             true => Some(p.1),
             false => None
-        });
+        })
+        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Path does not exists!"));
+        
+    Ok(res?.to_path_buf())
+}
 
+fn ask_confirmation() -> Result<bool, io::Error> {
+    let mut string = String::new();
 
-    match res {
-        Some(val) => Ok(val.to_path_buf()),
-        None => Err(io::Error::new(io::ErrorKind::Other, String::from("Path does not exist!"))),
+    print!("Are you sure? [y/n]\n> ");
+    io::stdout().flush()?;
+    io::stdin().read_line(&mut string)?;
+    
+    match string.to_lowercase().as_str().trim() {
+        "y" => Ok(true),
+        "ye" => Ok(true),
+        "yes" => Ok(true),
+        _ => Ok(false),
     }
 }
 
+fn choose_new_name(old_name: &str) -> Result<OsString, io::Error> {
+    let mut new_name = String::new();
+    print!("Choose new name for the file: \"{}\".\n> ", old_name);
+    io::stdout().flush()?;
+    io::stdin().read_line(&mut new_name)?;
+
+    Ok(OsString::from(new_name))
+}
 
 fn screeshot_listener(image_path: &PathBuf, state: Arc<Mutex<State>>) {
     let mut old_images = get_images(image_path);
@@ -99,20 +120,39 @@ fn screeshot_listener(image_path: &PathBuf, state: Arc<Mutex<State>>) {
 
         let state = state.lock().unwrap();
 
-        match *state { 
+        let destination_path = match *state { 
             State::Idle => continue,
             State::Stopped => break,
-            _ => println!("FRATM"),
-        }
+            State::Listening(ref path) => path.clone(),
+        };
 
         let new_images = get_new_images(image_path, &old_images);
-
         for image in &new_images {
 
+            let new_name = match choose_new_name(image.file_name().unwrap().to_str().unwrap()) {
+                Ok(val) => val,
+                Err(err) => {
+                    eprintln!("An error accurred: {}", err.to_string());
+                    continue;
+                }
+            };
+
+            match ask_confirmation() {
+                Ok(confirm) => if !confirm { continue; },
+                Err(err) => {
+                    eprintln!("An error accurred: {}", err.to_string());
+                    continue;
+                }
+            };
+
+            if let Err(err) = fs::rename(image, destination_path.join(new_name)) {
+                eprintln!("An error accurred: {}", err.to_string());
+                continue;
+            }
         }
 
         // refresh images
-        old_images = new_images;
+        old_images.extend(new_images);
     }
 }
 
