@@ -63,7 +63,7 @@ fn print_menu(paths: &HashSet<PathBuf>) {
     println!("{}", ceiling);
 }
 
-fn choose_working_dir(paths: &HashSet<PathBuf>) -> Result<PathBuf, io::Error> {
+fn choose_working_dir(paths: &HashSet<PathBuf>) -> Result<PathBuf, Box<dyn error::Error>> {
 
     print!("> ");
     io::stdout().lock().flush()?;
@@ -71,10 +71,7 @@ fn choose_working_dir(paths: &HashSet<PathBuf>) -> Result<PathBuf, io::Error> {
     // Get input position
     let mut input = String::new();
     io::stdin().read_line(&mut input)?;
-    let chose_number: usize = match input.trim().parse() {
-        Ok(val) => val,
-        Err(err) => return Err(io::Error::new(io::ErrorKind::Other, err.to_string())),
-    };
+    let chose_number: usize = input.trim().parse()?;
 
     
     // Match input
@@ -83,7 +80,7 @@ fn choose_working_dir(paths: &HashSet<PathBuf>) -> Result<PathBuf, io::Error> {
             true => Some(p.1),
             false => None
         })
-        .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "Path does not exists!"));
+        .ok_or_else(|| "Path does not exists!");
         
     Ok(res?.to_path_buf())
 }
@@ -109,7 +106,19 @@ fn choose_new_name(old_name: &str) -> Result<OsString, io::Error> {
     io::stdout().flush()?;
     io::stdin().read_line(&mut new_name)?;
 
-    Ok(OsString::from(new_name))
+    Ok(OsString::from(new_name.trim()))
+}
+
+
+fn move_image(image: &PathBuf, destination_path: &PathBuf) -> Result<(), Box<dyn error::Error>> {
+
+    let new_name = choose_new_name(image.file_name().unwrap().to_str().unwrap())?;
+
+    if !ask_confirmation()? { return Ok(()); }
+
+    fs::rename(image, destination_path.join("img").join(new_name))?;
+
+    Ok(())
 }
 
 fn screeshot_listener(image_path: &PathBuf, state: Arc<Mutex<State>>) {
@@ -129,25 +138,8 @@ fn screeshot_listener(image_path: &PathBuf, state: Arc<Mutex<State>>) {
         let new_images = get_new_images(image_path, &old_images);
         for image in &new_images {
 
-            let new_name = match choose_new_name(image.file_name().unwrap().to_str().unwrap()) {
-                Ok(val) => val,
-                Err(err) => {
-                    eprintln!("An error accurred: {}", err.to_string());
-                    continue;
-                }
-            };
-
-            match ask_confirmation() {
-                Ok(confirm) => if !confirm { continue; },
-                Err(err) => {
-                    eprintln!("An error accurred: {}", err.to_string());
-                    continue;
-                }
-            };
-
-            if let Err(err) = fs::rename(image, destination_path.join(new_name)) {
+            if let Err(err) = move_image(image, &destination_path) {
                 eprintln!("An error accurred: {}", err.to_string());
-                continue;
             }
         }
 
