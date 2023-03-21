@@ -1,9 +1,9 @@
 use core::time;
 use std::cmp::max;
-use std::collections::HashSet;
-use std::ffi::{OsString, OsStr};
+use std::collections::BTreeSet;
+use std::ffi::OsString;
 use std::sync::{Arc, Mutex};
-use std::io::{self, Write, Read};
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::{thread, fs, error};
 
@@ -40,7 +40,7 @@ enum State {
 
 
 
-fn print_menu(paths: &HashSet<PathBuf>) {
+fn print_menu(paths: &BTreeSet<PathBuf>) {
     let max_len = max(
         80, 
         paths.into_iter()
@@ -63,7 +63,7 @@ fn print_menu(paths: &HashSet<PathBuf>) {
     println!("{}", ceiling);
 }
 
-fn choose_working_dir(paths: &HashSet<PathBuf>) -> Result<PathBuf, Box<dyn error::Error>> {
+fn choose_working_dir(paths: &BTreeSet<PathBuf>) -> Result<PathBuf, Box<dyn error::Error>> {
 
     print!("> ");
     io::stdout().lock().flush()?;
@@ -148,26 +148,19 @@ fn screeshot_listener(image_path: &PathBuf, state: Arc<Mutex<State>>) {
     }
 }
 
-fn main() {
-    let args = ScreenshotArgs::parse();
-    let state = Arc::new(Mutex::new(State::Idle));
-
-
-    
-    let notes = get_note_dirs(&args.note);
-
-
-
-    let state_screen = Arc::clone(&state);
-    let screenshot_handle = thread::spawn(move || screeshot_listener(&args.screenshot, state_screen));
+fn choice(note_path: &PathBuf, state: Arc<Mutex<State>>) {
+    let notes = get_note_dirs(note_path);
 
     loop {
         thread::sleep(time::Duration::from_secs(1));
 
         let mut state = state.lock().unwrap();
-        println!("{:?}", *state);
 
-        if let State::Stopped = *state { break; }
+        match *state {
+            State::Idle => {},
+            State::Stopped => break,
+            State::Listening(_) => continue,
+        }
 
         print_menu(&notes);
         let result = match choose_working_dir(&notes) {
@@ -181,7 +174,21 @@ fn main() {
         *state = State::Listening(result);
     }
 
+}
 
+fn main() {
+    let args = ScreenshotArgs::parse();
+    let state = Arc::new(Mutex::new(State::Idle));
+
+
+    let state_screen = Arc::clone(&state);
+    let screenshot_handle = thread::spawn(move || screeshot_listener(&args.screenshot, state_screen));
+
+    let state_choice = Arc::clone(&state);
+    let choice_handle = thread::spawn(move || choice(&args.note, state_choice));
+
+
+    choice_handle.join().unwrap();
     screenshot_handle.join().unwrap();
 }
 

@@ -1,25 +1,25 @@
 use std::ffi::OsString;
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::fs;
 
 
-pub fn get_images(path: &PathBuf) -> HashSet<PathBuf> {
-    HashSet::from_iter(
-        fs::read_dir(path).unwrap()
-            .into_iter()
-            .filter_map(|p| {
-                let p = match p {
-                    Ok(val) => val.path(),
-                    Err(_) => return None,
-                };
+pub fn get_images(path: &PathBuf) -> BTreeSet<PathBuf> {
+    let iter = fs::read_dir(path).unwrap()
+        .into_iter()
+        .filter_map(|p| {
+            let p = match p {
+                Ok(val) => val.path(),
+                Err(_) => return None,
+            };
 
-                match fs::metadata(&p) {
-                    Ok(ref val) => if val.is_file() { Some(p) } else { None },
-                    Err(_) => None
-                }
-            })
-    )
+            match fs::metadata(&p) {
+                Ok(ref val) => if val.is_file() { Some(p) } else { None },
+                Err(_) => None
+            }
+        });
+
+    BTreeSet::from_iter(iter)
 }
 
 
@@ -38,27 +38,29 @@ pub fn contains_img_dir(path: &PathBuf) -> bool {
 }
 
 /// A directory to be included must contain a `img` subfolder
-pub fn get_note_dirs(path: &PathBuf) -> HashSet<PathBuf> {
-    HashSet::from_iter(
-        fs::read_dir(path).unwrap()
-            .into_iter()
-            .filter_map(|p| {
-                let p = match p {
-                    Ok(val) => val.path(),
-                    Err(_) => return None,
-                };
+pub fn get_note_dirs(path: &PathBuf) -> BTreeSet<PathBuf> {
+    let iter = fs::read_dir(path).unwrap()
+        .into_iter()
+        .filter_map(|p| {
+            let p = match p {
+                Ok(val) => val.path(),
+                Err(_) => return None,
+            };
 
-                match fs::metadata(&p) {
-                    Ok(ref val) => if val.is_dir() && contains_img_dir(&p) { Some(p) } else { return None },
-                    Err(_) => return None
-                }
-            })
-    )
+            let maybe_val = match fs::metadata(&p) {
+                Ok(ref val) => if val.is_dir() && contains_img_dir(&p) { Some(p) } else { None },
+                Err(_) => None
+            };
+
+            maybe_val
+        });
+
+    BTreeSet::from_iter(iter)
 }
 
 
-pub fn get_new_images(path: &PathBuf, old_images: &HashSet<PathBuf>) -> HashSet<PathBuf> {
-    let mut new_images = HashSet::<PathBuf>::new();
+pub fn get_new_images(path: &PathBuf, old_images: &BTreeSet<PathBuf>) -> BTreeSet<PathBuf> {
+    let mut new_images = BTreeSet::<PathBuf>::new();
 
     fs::read_dir(path).unwrap()
         .for_each(|p| {
