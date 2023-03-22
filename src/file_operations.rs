@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fs;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 pub fn get_images(path: &PathBuf) -> BTreeSet<PathBuf> {
     let iter = fs::read_dir(path).unwrap().into_iter().filter_map(|p| {
@@ -35,7 +36,9 @@ pub fn contains_img_dir(path: &PathBuf) -> bool {
                 Err(_) => return false,
             };
 
-            p.file_name() == OsString::from("img") && fs::metadata(p.path()).unwrap().is_dir()
+            let img = OsString::from_str("img").unwrap();
+
+            p.file_name() == img && fs::metadata(p.path()).unwrap().is_dir()
         })
         .count()
         == 1
@@ -49,7 +52,7 @@ pub fn get_note_dirs(path: &PathBuf) -> BTreeSet<PathBuf> {
             Err(_) => return None,
         };
 
-        let maybe_val = match fs::metadata(&p) {
+        match fs::metadata(&p) {
             Ok(ref val) => {
                 if val.is_dir() && contains_img_dir(&p) {
                     Some(p)
@@ -58,9 +61,7 @@ pub fn get_note_dirs(path: &PathBuf) -> BTreeSet<PathBuf> {
                 }
             }
             Err(_) => None,
-        };
-
-        maybe_val
+        }
     });
 
     BTreeSet::from_iter(iter)

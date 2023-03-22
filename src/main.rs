@@ -3,7 +3,7 @@ use std::cmp::max;
 use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::{error, fs, thread};
 
@@ -37,7 +37,7 @@ fn print_menu(paths: &BTreeSet<PathBuf>) {
     let max_len = max(
         80,
         paths
-            .into_iter()
+            .iter()
             .map(|p| p.display().to_string().chars().count())
             .max()
             .unwrap_or(0)
@@ -77,7 +77,7 @@ fn choose_working_dir(paths: &BTreeSet<PathBuf>) -> Result<PathBuf, Box<dyn erro
             true => Some(p.1),
             false => None,
         })
-        .ok_or_else(|| "Path does not exists!");
+        .ok_or("Path does not exists!");
 
     Ok(res?.to_path_buf())
 }
@@ -119,7 +119,7 @@ fn choose_new_name(old_name: &str) -> Result<OsString, io::Error> {
     Ok(OsString::from(new_name.trim()))
 }
 
-fn move_image(image: &PathBuf, destination_path: &PathBuf) -> Result<(), Box<dyn error::Error>> {
+fn move_image(image: &Path, destination_path: &Path) -> Result<(), Box<dyn error::Error>> {
     println!("Currently in \"{}\"", destination_path.display());
 
     let new_name = choose_new_name(image.file_name().unwrap().to_str().unwrap())?;
@@ -150,7 +150,7 @@ fn screeshot_listener(image_path: &PathBuf, state: Arc<Mutex<State>>) {
         let new_images = get_new_images(image_path, &old_images);
         for image in &new_images {
             if let Err(err) = move_image(image, &destination_path) {
-                eprintln!("An error accurred: {}", err.to_string());
+                eprintln!("An error accurred: {}", err);
             }
         }
 
@@ -176,7 +176,7 @@ fn choice(note_path: &PathBuf, state: Arc<Mutex<State>>) {
             let result = match choose_working_dir(&notes) {
                 Ok(val) => val,
                 Err(err) => {
-                    eprintln!("An error accurred: {}", err.to_string());
+                    eprintln!("An error accurred: {}", err);
                     continue;
                 }
             };
@@ -189,7 +189,7 @@ fn choice(note_path: &PathBuf, state: Arc<Mutex<State>>) {
                         *state = State::Stopped
                     }
                 }
-                Err(err) => eprintln!("An error accurred: {}", err.to_string()),
+                Err(err) => eprintln!("An error accurred: {}", err),
             }
         }
     }
