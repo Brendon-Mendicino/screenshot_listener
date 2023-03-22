@@ -2,32 +2,28 @@ use core::time;
 use std::cmp::max;
 use std::collections::BTreeSet;
 use std::ffi::OsString;
-use std::sync::{Arc, Mutex};
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::{thread, fs, error};
+use std::sync::{Arc, Mutex};
+use std::{error, fs, thread};
 
 use clap::Parser;
 
 mod file_operations;
 use file_operations::*;
 
-
-
 /// Program to move screeshots
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct ScreenshotArgs {
-
     /// Screenshot path
     #[arg(short, long, default_value = "/home/brendon/Pictures")]
     screenshot: PathBuf,
-    
+
     /// Notes path
     #[arg(short, long, default_value = "/home/brendon/uni/appunti")]
     note: PathBuf,
 }
-
 
 /// State of the program
 #[derive(Debug)]
@@ -37,24 +33,25 @@ enum State {
     Stopped,
 }
 
-
-
-
 fn print_menu(paths: &BTreeSet<PathBuf>) {
     let max_len = max(
-        80, 
-        paths.into_iter()
+        80,
+        paths
+            .into_iter()
             .map(|p| p.display().to_string().chars().count())
             .max()
-            .unwrap_or(0) + 6
+            .unwrap_or(0)
+            + 6,
     );
     let ceiling = (0..max_len).map(|_| "#").collect::<String>();
-
 
     println!("{}", ceiling);
     for (i, p) in paths.iter().enumerate() {
         let item = format!("# {:3}. {}", i, p.display());
-        let end = (0..(max_len - item.chars().count() - 1)).map(|_| " ").collect::<String>() + "#";
+        let end = (0..(max_len - item.chars().count() - 1))
+            .map(|_| " ")
+            .collect::<String>()
+            + "#";
         println!("{}{}", item, end);
 
         let spaces = (0..(max_len - 2)).map(|_| " ").collect::<String>();
@@ -64,7 +61,6 @@ fn print_menu(paths: &BTreeSet<PathBuf>) {
 }
 
 fn choose_working_dir(paths: &BTreeSet<PathBuf>) -> Result<PathBuf, Box<dyn error::Error>> {
-
     print!("> ");
     io::stdout().lock().flush()?;
 
@@ -73,15 +69,16 @@ fn choose_working_dir(paths: &BTreeSet<PathBuf>) -> Result<PathBuf, Box<dyn erro
     io::stdin().read_line(&mut input)?;
     let chose_number: usize = input.trim().parse()?;
 
-    
     // Match input
-    let res = paths.iter().enumerate()
+    let res = paths
+        .iter()
+        .enumerate()
         .find_map(|p| match p.0 == chose_number {
             true => Some(p.1),
-            false => None
+            false => None,
         })
         .ok_or_else(|| "Path does not exists!");
-        
+
     Ok(res?.to_path_buf())
 }
 
@@ -91,7 +88,7 @@ fn ask_confirmation() -> Result<bool, io::Error> {
     print!("Are you sure? [y/n]\n> ");
     io::stdout().flush()?;
     io::stdin().read_line(&mut string)?;
-    
+
     match string.to_lowercase().as_str().trim() {
         "y" => Ok(true),
         "ye" => Ok(true),
@@ -101,7 +98,6 @@ fn ask_confirmation() -> Result<bool, io::Error> {
 }
 
 fn ask_for_continuation() -> Result<bool, Box<dyn error::Error>> {
-
     let mut string = String::new();
 
     print!("Press [b/back] to go back, press anything to see new updates.\n> ");
@@ -114,7 +110,6 @@ fn ask_for_continuation() -> Result<bool, Box<dyn error::Error>> {
     }
 }
 
-
 fn choose_new_name(old_name: &str) -> Result<OsString, io::Error> {
     let mut new_name = String::new();
     print!("Choose new name for the file: \"{}\".\n> ", old_name);
@@ -124,14 +119,14 @@ fn choose_new_name(old_name: &str) -> Result<OsString, io::Error> {
     Ok(OsString::from(new_name.trim()))
 }
 
-
 fn move_image(image: &PathBuf, destination_path: &PathBuf) -> Result<(), Box<dyn error::Error>> {
-
     println!("Currently in \"{}\"", destination_path.display());
 
     let new_name = choose_new_name(image.file_name().unwrap().to_str().unwrap())?;
 
-    if !ask_confirmation()? { return Ok(()); }
+    if !ask_confirmation()? {
+        return Ok(());
+    }
 
     fs::rename(image, destination_path.join("img").join(new_name))?;
 
@@ -146,7 +141,7 @@ fn screeshot_listener(image_path: &PathBuf, state: Arc<Mutex<State>>) {
 
         let state = state.lock().unwrap();
 
-        let destination_path = match *state { 
+        let destination_path = match *state {
             State::Idle => continue,
             State::Stopped => break,
             State::Listening(ref path) => path.clone(),
@@ -154,7 +149,6 @@ fn screeshot_listener(image_path: &PathBuf, state: Arc<Mutex<State>>) {
 
         let new_images = get_new_images(image_path, &old_images);
         for image in &new_images {
-
             if let Err(err) = move_image(image, &destination_path) {
                 eprintln!("An error accurred: {}", err.to_string());
             }
@@ -186,32 +180,32 @@ fn choice(note_path: &PathBuf, state: Arc<Mutex<State>>) {
                     continue;
                 }
             };
-                
+
             *state = State::Listening(result);
         } else if let State::Listening(_) = *state {
-            
             match ask_for_continuation() {
-                Ok(is_continuation) => if !is_continuation { *state = State::Idle },
+                Ok(is_continuation) => {
+                    if !is_continuation {
+                        *state = State::Stopped
+                    }
+                }
                 Err(err) => eprintln!("An error accurred: {}", err.to_string()),
             }
         }
     }
-
 }
 
 fn main() {
     let args = ScreenshotArgs::parse();
     let state = Arc::new(Mutex::new(State::Idle));
 
-
     let state_screen = Arc::clone(&state);
-    let screenshot_handle = thread::spawn(move || screeshot_listener(&args.screenshot, state_screen));
+    let screenshot_handle =
+        thread::spawn(move || screeshot_listener(&args.screenshot, state_screen));
 
     let state_choice = Arc::clone(&state);
     let choice_handle = thread::spawn(move || choice(&args.note, state_choice));
 
-
     choice_handle.join().unwrap();
     screenshot_handle.join().unwrap();
 }
-
