@@ -100,6 +100,21 @@ fn ask_confirmation() -> Result<bool, io::Error> {
     }
 }
 
+fn ask_for_continuation() -> Result<bool, Box<dyn error::Error>> {
+
+    let mut string = String::new();
+
+    print!("Press [b/back] to go back, press anything to see new updates.\n> ");
+    io::stdout().flush()?;
+    io::stdin().read_line(&mut string)?;
+
+    match string.to_lowercase().as_str().trim() {
+        "b" | "back" => Ok(false),
+        _ => Ok(true),
+    }
+}
+
+
 fn choose_new_name(old_name: &str) -> Result<OsString, io::Error> {
     let mut new_name = String::new();
     print!("Choose new name for the file: \"{}\".\n> ", old_name);
@@ -111,6 +126,8 @@ fn choose_new_name(old_name: &str) -> Result<OsString, io::Error> {
 
 
 fn move_image(image: &PathBuf, destination_path: &PathBuf) -> Result<(), Box<dyn error::Error>> {
+
+    println!("Currently in \"{}\"", destination_path.display());
 
     let new_name = choose_new_name(image.file_name().unwrap().to_str().unwrap())?;
 
@@ -125,7 +142,7 @@ fn screeshot_listener(image_path: &PathBuf, state: Arc<Mutex<State>>) {
     let mut old_images = get_images(image_path);
 
     loop {
-        thread::sleep(time::Duration::from_secs(3));
+        thread::sleep(time::Duration::from_secs(1));
 
         let state = state.lock().unwrap();
 
@@ -156,22 +173,28 @@ fn choice(note_path: &PathBuf, state: Arc<Mutex<State>>) {
 
         let mut state = state.lock().unwrap();
 
-        match *state {
-            State::Idle => {},
-            State::Stopped => break,
-            State::Listening(_) => continue,
+        if let State::Stopped = *state {
+            break;
         }
 
-        print_menu(&notes);
-        let result = match choose_working_dir(&notes) {
-            Ok(val) => val,
-            Err(err) => {
-                eprintln!("An error accurred: {}", err.to_string());
-                continue;
-            }
-        };
+        if let State::Idle = *state {
+            print_menu(&notes);
+            let result = match choose_working_dir(&notes) {
+                Ok(val) => val,
+                Err(err) => {
+                    eprintln!("An error accurred: {}", err.to_string());
+                    continue;
+                }
+            };
                 
-        *state = State::Listening(result);
+            *state = State::Listening(result);
+        } else if let State::Listening(_) = *state {
+            
+            match ask_for_continuation() {
+                Ok(is_continuation) => if !is_continuation { *state = State::Idle },
+                Err(err) => eprintln!("An error accurred: {}", err.to_string()),
+            }
+        }
     }
 
 }
