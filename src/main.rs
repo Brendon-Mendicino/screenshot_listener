@@ -33,6 +33,12 @@ enum State {
     Stopped,
 }
 
+enum Input {
+    Continue,
+    Back,
+    Exit,
+}
+
 fn print_menu(paths: &BTreeSet<PathBuf>) {
     let max_len = max(
         80,
@@ -97,16 +103,17 @@ fn ask_confirmation() -> Result<bool, io::Error> {
     }
 }
 
-fn ask_for_continuation() -> Result<bool, Box<dyn error::Error>> {
+fn ask_for_continuation() -> Result<Input, Box<dyn error::Error>> {
     let mut string = String::new();
 
-    print!("Press [b/back] to go back, press anything to see new updates.\n> ");
+    print!("Press [b/back] to go back, [e] to exit, press anything to see new updates.\n> ");
     io::stdout().flush()?;
     io::stdin().read_line(&mut string)?;
 
     match string.to_lowercase().as_str().trim() {
-        "b" | "back" => Ok(false),
-        _ => Ok(true),
+        "b" | "back" => Ok(Input::Back),
+        "e" | "exit" => Ok(Input::Exit),
+        _ => Ok(Input::Continue),
     }
 }
 
@@ -183,14 +190,18 @@ fn choice(note_path: &PathBuf, state: Arc<Mutex<State>>) {
 
             *state = State::Listening(result);
         } else if let State::Listening(_) = *state {
-            match ask_for_continuation() {
-                Ok(is_continuation) => {
-                    if !is_continuation {
-                        *state = State::Stopped
-                    }
-                }
-                Err(err) => eprintln!("An error accurred: {}", err),
+
+            if let Err(err) = ask_for_continuation() {
+                eprintln!("An error accurred: {}", err);
+                continue;
             }
+
+            match ask_for_continuation().unwrap() {
+                Input::Back => *state = State::Idle,
+                Input::Exit => *state = State::Stopped,
+                Input::Continue => (),
+            }
+
         }
     }
 }
