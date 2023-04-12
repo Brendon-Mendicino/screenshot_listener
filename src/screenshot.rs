@@ -120,9 +120,11 @@ mod listener {
     fn get_new_images(path: &Path, old_images: &BTreeSet<PathBuf>) -> BTreeSet<PathBuf> {
         let mut new_images = BTreeSet::<PathBuf>::new();
 
-        fs::read_dir(path).unwrap().for_each(|p| if let Ok(val) = p {
-            if !old_images.contains(&val.path()) {
-                new_images.insert(val.path());
+        fs::read_dir(path).unwrap().for_each(|p| {
+            if let Ok(val) = p {
+                if !old_images.contains(&val.path()) {
+                    new_images.insert(val.path());
+                }
             }
         });
 

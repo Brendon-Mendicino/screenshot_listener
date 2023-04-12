@@ -1,10 +1,12 @@
 use core::time;
 use std::cmp::max;
 use std::collections::BTreeSet;
+use std::error::Error;
 use std::ffi::OsString;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+
 use std::sync::{Arc, Mutex};
 use std::{error, fs, thread};
 
@@ -114,14 +116,14 @@ fn contains_img_dir(path: &PathBuf) -> bool {
 }
 
 /// A directory to be included must contain a `img` subfolder
-fn get_note_dirs(path: &Path) -> BTreeSet<PathBuf> {
-    let iter = fs::read_dir(path).unwrap().into_iter().filter_map(|p| {
-        let p = match p {
-            Ok(val) => val.path(),
+fn get_note_dirs(path: &Path) -> Result<BTreeSet<PathBuf>, Box<dyn Error>> {
+    let iter = fs::read_dir(path)?
+        .into_iter()
+        .filter_map(|p| match p {
+            Ok(val) => Some(val.path()),
             Err(_) => return None,
-        };
-
-        match fs::metadata(&p) {
+        })
+        .flat_map(|p| match fs::metadata(&p) {
             Ok(ref val) => {
                 if val.is_dir() && contains_img_dir(&p) {
                     Some(p)
@@ -130,14 +132,13 @@ fn get_note_dirs(path: &Path) -> BTreeSet<PathBuf> {
                 }
             }
             Err(_) => None,
-        }
-    });
+        });
 
-    BTreeSet::from_iter(iter)
+    Ok(BTreeSet::from_iter(iter))
 }
 
 fn menu(note_path: &Path, state: Arc<Mutex<ListeningState>>) {
-    let notes = get_note_dirs(note_path);
+    let notes = get_note_dirs(note_path).expect("Path sould exists!");
 
     loop {
         thread::sleep(time::Duration::from_secs(1));
@@ -175,8 +176,7 @@ fn main() {
     let mut listener = ScreenshotListener::new(&args.screenshot);
     let state = listener.listen();
 
-    let state_choice = Arc::clone(&state);
-    let choice_handle = thread::spawn(move || menu(&args.note, state_choice));
+    let choice_handle = thread::spawn(move|| menu(&args.note, state));
 
     choice_handle.join().unwrap();
     listener.stop().unwrap();
