@@ -1,31 +1,8 @@
 use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{PathBuf, Path};
 use std::str::FromStr;
-
-pub fn get_images(path: &PathBuf) -> BTreeSet<PathBuf> {
-    let iter = fs::read_dir(path).unwrap().into_iter().filter_map(|p| {
-        let p = match p {
-            Ok(val) => val.path(),
-            Err(_) => return None,
-        };
-
-        match fs::metadata(&p) {
-            Ok(ref val) => {
-                if val.is_file() {
-                    Some(p)
-                } else {
-                    None
-                }
-            }
-            Err(_) => None,
-        }
-    });
-
-    BTreeSet::from_iter(iter)
-}
-
 pub fn contains_img_dir(path: &PathBuf) -> bool {
     fs::read_dir(path)
         .unwrap()
@@ -45,7 +22,7 @@ pub fn contains_img_dir(path: &PathBuf) -> bool {
 }
 
 /// A directory to be included must contain a `img` subfolder
-pub fn get_note_dirs(path: &PathBuf) -> BTreeSet<PathBuf> {
+pub fn get_note_dirs(path: &Path) -> BTreeSet<PathBuf> {
     let iter = fs::read_dir(path).unwrap().into_iter().filter_map(|p| {
         let p = match p {
             Ok(val) => val.path(),
@@ -65,22 +42,4 @@ pub fn get_note_dirs(path: &PathBuf) -> BTreeSet<PathBuf> {
     });
 
     BTreeSet::from_iter(iter)
-}
-
-pub fn get_new_images(path: &PathBuf, old_images: &BTreeSet<PathBuf>) -> BTreeSet<PathBuf> {
-    let mut new_images = BTreeSet::<PathBuf>::new();
-
-    fs::read_dir(path).unwrap().for_each(|p| {
-        match p {
-            Ok(val) => {
-                if old_images.contains(&val.path()) {
-                    return;
-                }
-                new_images.insert(val.path())
-            }
-            Err(_) => false,
-        };
-    });
-
-    new_images
 }

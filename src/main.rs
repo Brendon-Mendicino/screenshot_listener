@@ -4,13 +4,14 @@ use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::{error, fs, thread};
 
 use clap::Parser;
 
-mod file_operations;
-use file_operations::*;
+mod screenshot;
+use screenshot::{ListeningState, ScreenshotListener};
 
 /// Program to move screeshots
 #[derive(Parser, Debug)]
@@ -23,14 +24,6 @@ struct ScreenshotArgs {
     /// Notes path
     #[arg(short, long, default_value = "/home/brendon/uni/appunti")]
     note: PathBuf,
-}
-
-/// State of the program
-#[derive(Debug)]
-enum State {
-    Idle,
-    Listening(PathBuf),
-    Stopped,
 }
 
 enum Input {
@@ -88,21 +81,6 @@ fn choose_working_dir(paths: &BTreeSet<PathBuf>) -> Result<PathBuf, Box<dyn erro
     Ok(res?.to_path_buf())
 }
 
-fn ask_confirmation() -> Result<bool, io::Error> {
-    let mut string = String::new();
-
-    print!("Are you sure? [y/n]\n> ");
-    io::stdout().flush()?;
-    io::stdin().read_line(&mut string)?;
-
-    match string.to_lowercase().as_str().trim() {
-        "y" => Ok(true),
-        "ye" => Ok(true),
-        "yes" => Ok(true),
-        _ => Ok(false),
-    }
-}
-
 fn ask_for_continuation() -> Result<Input, Box<dyn error::Error>> {
     let mut string = String::new();
 
@@ -117,56 +95,48 @@ fn ask_for_continuation() -> Result<Input, Box<dyn error::Error>> {
     }
 }
 
-fn choose_new_name(old_name: &str) -> Result<OsString, io::Error> {
-    let mut new_name = String::new();
-    print!("Choose new name for the file: \"{}\".\n> ", old_name);
-    io::stdout().flush()?;
-    io::stdin().read_line(&mut new_name)?;
+fn contains_img_dir(path: &PathBuf) -> bool {
+    fs::read_dir(path)
+        .unwrap()
+        .into_iter()
+        .filter(|p| {
+            let p = match p {
+                Ok(val) => val,
+                Err(_) => return false,
+            };
 
-    Ok(OsString::from(new_name.trim()))
+            let img = OsString::from_str("img").unwrap();
+
+            p.file_name() == img && fs::metadata(p.path()).unwrap().is_dir()
+        })
+        .count()
+        == 1
 }
 
-fn move_image(image: &Path, destination_path: &Path) -> Result<(), Box<dyn error::Error>> {
-    println!("Currently in \"{}\"", destination_path.display());
-
-    let new_name = choose_new_name(image.file_name().unwrap().to_str().unwrap())?;
-
-    if !ask_confirmation()? {
-        return Ok(());
-    }
-
-    fs::rename(image, destination_path.join("img").join(new_name))?;
-
-    Ok(())
-}
-
-fn screeshot_listener(image_path: &PathBuf, state: Arc<Mutex<State>>) {
-    let mut old_images = get_images(image_path);
-
-    loop {
-        thread::sleep(time::Duration::from_secs(1));
-
-        let state = state.lock().unwrap();
-
-        let destination_path = match *state {
-            State::Idle => continue,
-            State::Stopped => break,
-            State::Listening(ref path) => path.clone(),
+/// A directory to be included must contain a `img` subfolder
+fn get_note_dirs(path: &Path) -> BTreeSet<PathBuf> {
+    let iter = fs::read_dir(path).unwrap().into_iter().filter_map(|p| {
+        let p = match p {
+            Ok(val) => val.path(),
+            Err(_) => return None,
         };
 
-        let new_images = get_new_images(image_path, &old_images);
-        for image in &new_images {
-            if let Err(err) = move_image(image, &destination_path) {
-                eprintln!("An error accurred: {}", err);
+        match fs::metadata(&p) {
+            Ok(ref val) => {
+                if val.is_dir() && contains_img_dir(&p) {
+                    Some(p)
+                } else {
+                    None
+                }
             }
+            Err(_) => None,
         }
+    });
 
-        // refresh images
-        old_images.extend(new_images);
-    }
+    BTreeSet::from_iter(iter)
 }
 
-fn choice(note_path: &PathBuf, state: Arc<Mutex<State>>) {
+fn menu(note_path: &Path, state: Arc<Mutex<ListeningState>>) {
     let notes = get_note_dirs(note_path);
 
     loop {
@@ -174,11 +144,11 @@ fn choice(note_path: &PathBuf, state: Arc<Mutex<State>>) {
 
         let mut state = state.lock().unwrap();
 
-        if let State::Stopped = *state {
+        if let ListeningState::Stopped = *state {
             break;
         }
 
-        if let State::Idle = *state {
+        if let ListeningState::Idle = *state {
             print_menu(&notes);
             let result = match choose_working_dir(&notes) {
                 Ok(val) => val,
@@ -188,35 +158,26 @@ fn choice(note_path: &PathBuf, state: Arc<Mutex<State>>) {
                 }
             };
 
-            *state = State::Listening(result);
-        } else if let State::Listening(_) = *state {
-
-            if let Err(err) = ask_for_continuation() {
-                eprintln!("An error accurred: {}", err);
-                continue;
-            }
-
+            *state = ListeningState::Listening(result);
+        } else if let ListeningState::Listening(_) = *state {
             match ask_for_continuation().unwrap() {
-                Input::Back => *state = State::Idle,
-                Input::Exit => *state = State::Stopped,
+                Input::Back => *state = ListeningState::Idle,
+                Input::Exit => *state = ListeningState::Stopped,
                 Input::Continue => (),
             }
-
         }
     }
 }
 
 fn main() {
     let args = ScreenshotArgs::parse();
-    let state = Arc::new(Mutex::new(State::Idle));
 
-    let state_screen = Arc::clone(&state);
-    let screenshot_handle =
-        thread::spawn(move || screeshot_listener(&args.screenshot, state_screen));
+    let mut listener = ScreenshotListener::new(&args.screenshot);
+    let state = listener.listen();
 
     let state_choice = Arc::clone(&state);
-    let choice_handle = thread::spawn(move || choice(&args.note, state_choice));
+    let choice_handle = thread::spawn(move || menu(&args.note, state_choice));
 
     choice_handle.join().unwrap();
-    screenshot_handle.join().unwrap();
+    listener.stop().unwrap();
 }
