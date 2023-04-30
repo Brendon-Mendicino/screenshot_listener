@@ -7,25 +7,33 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::{error, fs, thread};
 
 use clap::Parser;
 
 mod screenshot;
-use screenshot::{ListeningState, ScreenshotListener};
+use screenshot::ScreenshotListener;
 
 /// Program to move screeshots
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct ScreenshotArgs {
     /// Screenshot path
-    #[arg(short, long, default_value = "/home/brendon/Pictures")]
+    #[arg(short, long, default_value = "/home/brendon/Pictures/Screenshots")]
     screenshot: PathBuf,
 
     /// Notes path
     #[arg(short, long, default_value = "/home/brendon/uni/appunti")]
     note: PathBuf,
+}
+
+#[derive(Debug)]
+enum MenuState {
+    Idle,
+    Listening(PathBuf),
+    Stopped,
 }
 
 enum Input {
@@ -137,19 +145,53 @@ fn get_note_dirs(path: &Path) -> Result<BTreeSet<PathBuf>, Box<dyn Error>> {
     Ok(BTreeSet::from_iter(iter))
 }
 
-fn menu(note_path: &Path, state: Arc<Mutex<ListeningState>>) {
+fn choose_new_name(old_name: &str) -> Result<OsString, io::Error> {
+    let mut new_name = String::new();
+    print!("Choose new name for the file: \"{}\".\n> ", old_name);
+    io::stdout().flush()?;
+    io::stdin().read_line(&mut new_name)?;
+
+    Ok(OsString::from(new_name.trim()))
+}
+
+fn ask_confirmation() -> Result<bool, io::Error> {
+    let mut input_line = String::new();
+
+    print!("Are you sure? [y/n]\n> ");
+    io::stdout().flush()?;
+    io::stdin().read_line(&mut input_line)?;
+
+    match input_line.to_lowercase().as_str().trim() {
+        "y" => Ok(true),
+        "ye" => Ok(true),
+        "yes" => Ok(true),
+        _ => Ok(false),
+    }
+}
+
+fn move_image(image: &Path, destination_path: &Path) -> Result<(), Box<dyn Error>> {
+    println!("Currently in \"{}\"", destination_path.display());
+
+    let new_name = choose_new_name(image.file_name().unwrap().to_str().unwrap())?;
+
+    if !ask_confirmation()? {
+        return Ok(());
+    }
+
+    fs::rename(image, destination_path.join("img").join(new_name))?;
+
+    Ok(())
+}
+
+fn menu(note_path: &Path, receiver: Receiver<PathBuf>) {
     let notes = get_note_dirs(note_path).expect("Path sould exists!");
+
+    let mut state = MenuState::Idle;
 
     loop {
         thread::sleep(time::Duration::from_secs(1));
 
-        let mut state = state.lock().unwrap();
-
-        if let ListeningState::Stopped = *state {
-            break;
-        }
-
-        if let ListeningState::Idle = *state {
+        if let MenuState::Idle = state {
             print_menu(&notes);
             let result = match choose_working_dir(&notes) {
                 Ok(val) => val,
@@ -159,13 +201,15 @@ fn menu(note_path: &Path, state: Arc<Mutex<ListeningState>>) {
                 }
             };
 
-            *state = ListeningState::Listening(result);
-        } else if let ListeningState::Listening(_) = *state {
+            state = MenuState::Listening(result);
+        } else if let MenuState::Listening(_) = state {
             match ask_for_continuation().unwrap() {
-                Input::Back => *state = ListeningState::Idle,
-                Input::Exit => *state = ListeningState::Stopped,
+                Input::Back => state = MenuState::Idle,
+                Input::Exit => state = MenuState::Stopped,
                 Input::Continue => (),
             }
+        } else {
+            break;
         }
     }
 }
@@ -174,9 +218,9 @@ fn main() {
     let args = ScreenshotArgs::parse();
 
     let mut listener = ScreenshotListener::new(&args.screenshot);
-    let state = listener.listen();
+    let receiver = listener.listen();
 
-    let choice_handle = thread::spawn(move|| menu(&args.note, state));
+    let choice_handle = thread::spawn(move || menu(&args.note, receiver));
 
     choice_handle.join().unwrap();
     listener.stop().unwrap();

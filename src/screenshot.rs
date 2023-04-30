@@ -1,6 +1,9 @@
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{
+        mpsc::{channel, Receiver, Sender},
+        Arc, Mutex,
+    },
     thread::{self, JoinHandle},
 };
 
@@ -11,14 +14,6 @@ pub struct ScreenshotListener {
     handle: Option<JoinHandle<()>>,
 }
 
-/// State of the program
-#[derive(Debug)]
-pub enum ListeningState {
-    Idle,
-    Listening(PathBuf),
-    Stopped,
-}
-
 impl ScreenshotListener {
     pub fn new(path: &Path) -> Self {
         ScreenshotListener {
@@ -27,14 +22,13 @@ impl ScreenshotListener {
         }
     }
 
-    pub fn listen(&mut self) -> Arc<Mutex<ListeningState>> {
-        let state = Arc::new(Mutex::new(ListeningState::Idle));
+    pub fn listen(&mut self) -> Receiver<PathBuf> {
         let path = self.path.clone();
-        let return_state = state.clone();
+        let (sender, receiver) = channel();
 
-        self.handle = Some(thread::spawn(move || screeshot_listener(&path, state)));
+        self.handle = Some(thread::spawn(move || screeshot_listener(&path, sender)));
 
-        return_state
+        receiver
     }
 
     pub fn stop(mut self) -> thread::Result<()> {
@@ -63,31 +57,21 @@ mod listener {
         fs,
         io::{self, Write},
         path::{Path, PathBuf},
-        sync::{Arc, Mutex},
+        sync::{mpsc::Sender, Arc, Mutex},
         thread,
     };
 
-    use super::ListeningState;
-
-    pub fn screeshot_listener(image_path: &Path, state: Arc<Mutex<ListeningState>>) {
+    pub fn screeshot_listener(image_path: &Path, sender: Sender<PathBuf>) {
         let mut old_images = get_images(image_path);
 
         loop {
             thread::sleep(time::Duration::from_secs(1));
 
-            let state = state.lock().unwrap();
-
-            let destination_path = match *state {
-                ListeningState::Idle => continue,
-                ListeningState::Stopped => break,
-                ListeningState::Listening(ref path) => path.clone(),
-            };
-
             let new_images = get_new_images(image_path, &old_images);
             for image in &new_images {
-                if let Err(err) = move_image(image, &destination_path) {
-                    eprintln!("An error accurred: {}", err);
-                }
+                sender
+                    .send(image.clone())
+                    .expect("Sender should be albe to send image");
             }
 
             // refresh images
@@ -129,43 +113,5 @@ mod listener {
         });
 
         new_images
-    }
-
-    fn move_image(image: &Path, destination_path: &Path) -> Result<(), Box<dyn Error>> {
-        println!("Currently in \"{}\"", destination_path.display());
-
-        let new_name = choose_new_name(image.file_name().unwrap().to_str().unwrap())?;
-
-        if !ask_confirmation()? {
-            return Ok(());
-        }
-
-        fs::rename(image, destination_path.join("img").join(new_name))?;
-
-        Ok(())
-    }
-
-    fn choose_new_name(old_name: &str) -> Result<OsString, io::Error> {
-        let mut new_name = String::new();
-        print!("Choose new name for the file: \"{}\".\n> ", old_name);
-        io::stdout().flush()?;
-        io::stdin().read_line(&mut new_name)?;
-
-        Ok(OsString::from(new_name.trim()))
-    }
-
-    fn ask_confirmation() -> Result<bool, io::Error> {
-        let mut input_line = String::new();
-
-        print!("Are you sure? [y/n]\n> ");
-        io::stdout().flush()?;
-        io::stdin().read_line(&mut input_line)?;
-
-        match input_line.to_lowercase().as_str().trim() {
-            "y" => Ok(true),
-            "ye" => Ok(true),
-            "yes" => Ok(true),
-            _ => Ok(false),
-        }
     }
 }
