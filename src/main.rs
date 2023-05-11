@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use std::sync::mpsc::Receiver;
-use std::sync::{Arc, Mutex};
+
 use std::{error, fs, thread};
 
 use clap::Parser;
@@ -29,7 +29,7 @@ struct ScreenshotArgs {
     note: PathBuf,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum MenuState {
     Idle,
     Listening(PathBuf),
@@ -189,8 +189,6 @@ fn menu(note_path: &Path, receiver: Receiver<PathBuf>) {
     let mut state = MenuState::Idle;
 
     loop {
-        thread::sleep(time::Duration::from_secs(1));
-
         if let MenuState::Idle = state {
             print_menu(&notes);
             let result = match choose_working_dir(&notes) {
@@ -202,7 +200,12 @@ fn menu(note_path: &Path, receiver: Receiver<PathBuf>) {
             };
 
             state = MenuState::Listening(result);
-        } else if let MenuState::Listening(_) = state {
+        } else if let MenuState::Listening(path) = &state {
+            match receiver.try_recv() {
+                Ok(image) => move_image(&image, &path).unwrap(),
+                Err(_) => (),
+            }
+
             match ask_for_continuation().unwrap() {
                 Input::Back => state = MenuState::Idle,
                 Input::Exit => state = MenuState::Stopped,

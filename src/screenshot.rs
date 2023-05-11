@@ -1,8 +1,7 @@
 use std::{
     path::{Path, PathBuf},
     sync::{
-        mpsc::{channel, Receiver, Sender},
-        Arc, Mutex,
+        mpsc::{channel, Receiver},
     },
     thread::{self, JoinHandle},
 };
@@ -52,12 +51,9 @@ mod listener {
     use core::time;
     use std::{
         collections::BTreeSet,
-        error::Error,
-        ffi::OsString,
         fs,
-        io::{self, Write},
         path::{Path, PathBuf},
-        sync::{mpsc::Sender, Arc, Mutex},
+        sync::{mpsc::Sender},
         thread,
     };
 
