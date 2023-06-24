@@ -1,3 +1,4 @@
+use core::panic;
 use std::{
     collections::HashSet,
     fs, io,
@@ -34,7 +35,13 @@ impl ScreenshotListener {
         }
     }
 
+    /// Starts a new thread and listen for new changes in the
+    /// `path` directory
     pub fn listen(&mut self) -> Receiver<PathBuf> {
+        if self.handle.is_some() {
+            panic!("Called listen when already listening!");
+        }
+
         let path = self.path.clone();
         let (sender, receiver) = channel();
 

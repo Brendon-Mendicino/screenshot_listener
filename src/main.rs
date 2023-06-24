@@ -1,9 +1,8 @@
-use core::time;
 use std::cmp::max;
 use std::collections::BTreeSet;
 use std::error::Error;
 use std::ffi::OsString;
-use std::io::{self, Write};
+use std::io::{self, stdout, Write};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -11,10 +10,17 @@ use std::sync::mpsc::Receiver;
 
 use std::{error, fs, thread};
 
+use anyhow::Context;
 use clap::Parser;
 
 mod screenshot;
+use dialoguer::console::Term;
+use dialoguer::FuzzySelect;
 use screenshot::ScreenshotListener;
+
+use crate::terminal::Terminal;
+
+mod terminal;
 
 /// Program to move screeshots
 #[derive(Parser, Debug)]
@@ -105,9 +111,9 @@ fn ask_for_continuation() -> Result<Input, Box<dyn error::Error>> {
     }
 }
 
-fn contains_img_dir(path: &PathBuf) -> bool {
-    fs::read_dir(path)
-        .unwrap()
+fn contains_img_dir(path: &PathBuf) -> anyhow::Result<bool> {
+    let res = fs::read_dir(path)
+        .with_context(|| format!("Failed to read: {}", path.to_string_lossy()))?
         .into_iter()
         .filter(|p| {
             let p = match p {
@@ -117,14 +123,16 @@ fn contains_img_dir(path: &PathBuf) -> bool {
 
             let img = OsString::from_str("img").unwrap();
 
-            p.file_name() == img && fs::metadata(p.path()).unwrap().is_dir()
+            p.file_name() == img && fs::metadata(p.path()).map_or(false, |p| p.is_dir())
         })
         .count()
-        == 1
+        == 1;
+
+    Ok(res)
 }
 
 /// A directory to be included must contain a `img` subfolder
-fn get_note_dirs(path: &Path) -> Result<BTreeSet<PathBuf>, Box<dyn Error>> {
+fn get_note_dirs(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
     let iter = fs::read_dir(path)?
         .into_iter()
         .filter_map(|p| match p {
@@ -132,17 +140,12 @@ fn get_note_dirs(path: &Path) -> Result<BTreeSet<PathBuf>, Box<dyn Error>> {
             Err(_) => return None,
         })
         .flat_map(|p| match fs::metadata(&p) {
-            Ok(ref val) => {
-                if val.is_dir() && contains_img_dir(&p) {
-                    Some(p)
-                } else {
-                    None
-                }
-            }
+            Ok(ref val) if val.is_dir() && contains_img_dir(&p).map_or(false, |v| v) => Some(p),
+            Ok(_) => None,
             Err(_) => None,
         });
 
-    Ok(BTreeSet::from_iter(iter))
+    Ok(Vec::from_iter(iter))
 }
 
 fn choose_new_name(old_name: &str) -> Result<OsString, io::Error> {
@@ -183,23 +186,25 @@ fn move_image(image: &Path, destination_path: &Path) -> Result<(), Box<dyn Error
     Ok(())
 }
 
-fn menu(note_path: &Path, receiver: Receiver<PathBuf>) {
+fn menu(note_path: &Path, receiver: Receiver<PathBuf>) -> anyhow::Result<()> {
+    println!("{:?}", note_path.to_string_lossy());
     let notes = get_note_dirs(note_path).expect("Path sould exists!");
 
+    let term = Terminal::new();
     let mut state = MenuState::Idle;
 
     loop {
         if let MenuState::Idle = state {
-            print_menu(&notes);
-            let result = match choose_working_dir(&notes) {
-                Ok(val) => val,
-                Err(err) => {
-                    eprintln!("An error accurred: {}", err);
-                    continue;
-                }
-            };
+            let items = Vec::from_iter(
+                notes
+                    .iter()
+                    .map(|p| p.file_name().unwrap().to_string_lossy()),
+            );
 
-            state = MenuState::Listening(result);
+            let index = term.select(items.as_slice())?;
+            dbg!(&index);
+
+            state = MenuState::Listening(notes[index].clone());
         } else if let MenuState::Listening(path) = &state {
             match receiver.try_recv() {
                 Ok(image) => move_image(&image, &path).unwrap(),
@@ -215,16 +220,21 @@ fn menu(note_path: &Path, receiver: Receiver<PathBuf>) {
             break;
         }
     }
+
+    Ok(())
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     let args = ScreenshotArgs::parse();
 
     let mut listener = ScreenshotListener::new(&args.screenshot);
-    let receiver = listener.listen();
+    let receiver: Receiver<PathBuf> = listener.listen();
 
-    let choice_handle = thread::spawn(move || menu(&args.note, receiver));
+    thread::scope(|s| {
+        s.spawn(move || menu(&args.note, receiver));
+    });
 
-    choice_handle.join().unwrap();
-    listener.stop().unwrap();
+    listener.stop()?;
+
+    Ok(())
 }
