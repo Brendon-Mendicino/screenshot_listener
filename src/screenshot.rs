@@ -1,16 +1,29 @@
 use std::{
+    collections::HashSet,
+    fs, io,
     path::{Path, PathBuf},
-    sync::{
-        mpsc::{channel, Receiver},
-    },
+    sync::mpsc::{channel, Receiver, SendError, Sender},
     thread::{self, JoinHandle},
+    time,
 };
 
-use listener::screeshot_listener;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum ListenerError<T> {
+    #[error("IO error: {0}")]
+    Io(#[from] io::Error),
+
+    #[error("Sender error: {0}")]
+    Sender(#[from] SendError<T>),
+
+    #[error("Thread join error")]
+    ThreadError,
+}
 
 pub struct ScreenshotListener {
     path: PathBuf,
-    handle: Option<JoinHandle<()>>,
+    handle: Option<JoinHandle<Result<(), ListenerError<PathBuf>>>>,
 }
 
 impl ScreenshotListener {
@@ -25,89 +38,64 @@ impl ScreenshotListener {
         let path = self.path.clone();
         let (sender, receiver) = channel();
 
-        self.handle = Some(thread::spawn(move || screeshot_listener(&path, sender)));
+        self.handle = Some(thread::spawn(move || {
+            Self::screeshot_listener(&path, sender)
+        }));
 
         receiver
     }
 
-    pub fn stop(mut self) -> thread::Result<()> {
+    pub fn stop(mut self) -> Result<(), ListenerError<PathBuf>> {
         if let Some(h) = self.handle.take() {
-            h.join()?;
-        }
-
-        Ok(())
-    }
-}
-
-impl Drop for ScreenshotListener {
-    fn drop(&mut self) {
-        if self.handle.is_some() {
-            panic!("Listener must be stopped!");
+            match h.join() {
+                Ok(res) => res,
+                Err(_) => Err(ListenerError::ThreadError),
+            }
+        } else {
+            Ok(())
         }
     }
-}
 
-mod listener {
-    use core::time;
-    use std::{
-        collections::BTreeSet,
-        fs,
-        path::{Path, PathBuf},
-        sync::{mpsc::Sender},
-        thread,
-    };
-
-    pub fn screeshot_listener(image_path: &Path, sender: Sender<PathBuf>) {
-        let mut old_images = get_images(image_path);
+    fn screeshot_listener(
+        image_path: &Path,
+        sender: Sender<PathBuf>,
+    ) -> Result<(), ListenerError<PathBuf>> {
+        let mut images = Self::get_images(image_path)?;
 
         loop {
             thread::sleep(time::Duration::from_secs(1));
 
-            let new_images = get_new_images(image_path, &old_images);
-            for image in &new_images {
-                sender
-                    .send(image.clone())
-                    .expect("Sender should be albe to send image");
+            let new_images = Self::get_images(image_path)?;
+            for image in new_images.difference(&images) {
+                sender.send(image.clone())?;
             }
 
             // refresh images
-            old_images.extend(new_images);
+            images = new_images;
         }
     }
 
-    fn get_images(path: &Path) -> BTreeSet<PathBuf> {
-        let iter = fs::read_dir(path)
-            .unwrap()
+    fn get_images(path: &Path) -> io::Result<HashSet<PathBuf>> {
+        let iter = fs::read_dir(path)?
             .into_iter()
             .filter_map(|p| match p {
                 Ok(val) => Some(val.path()),
                 Err(_) => None,
             })
             .filter_map(|p| match fs::metadata(&p) {
-                Ok(ref val) => {
-                    if val.is_file() {
-                        Some(p)
-                    } else {
-                        None
-                    }
-                }
+                Ok(ref val) if val.is_file() => Some(p),
+                Ok(_) => None,
                 Err(_) => None,
             });
 
-        BTreeSet::from_iter(iter)
+        Ok(iter.collect())
     }
+}
 
-    fn get_new_images(path: &Path, old_images: &BTreeSet<PathBuf>) -> BTreeSet<PathBuf> {
-        let mut new_images = BTreeSet::<PathBuf>::new();
-
-        fs::read_dir(path).unwrap().for_each(|p| {
-            if let Ok(val) = p {
-                if !old_images.contains(&val.path()) {
-                    new_images.insert(val.path());
-                }
-            }
-        });
-
-        new_images
+impl Drop for ScreenshotListener {
+    fn drop(&mut self) {
+        if self.handle.is_some() {
+            panic!("Listener must be stopped! Call the ScreeshotListener::stop method.");
+        }
     }
 }
