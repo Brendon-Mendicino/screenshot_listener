@@ -3,14 +3,12 @@ use std::{
     collections::HashSet,
     fs, io,
     path::{Path, PathBuf},
-    sync::mpsc::{channel, Receiver, SendError, Sender},
+    sync::mpsc::{channel, Receiver, SendError, Sender, TryRecvError},
     thread::{self, JoinHandle},
     time,
 };
 
-use thiserror::Error;
-
-#[derive(Debug, Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum ListenerError<T> {
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
@@ -25,6 +23,7 @@ pub enum ListenerError<T> {
 pub struct ScreenshotListener {
     path: PathBuf,
     handle: Option<JoinHandle<Result<(), ListenerError<PathBuf>>>>,
+    stop_signal: Option<Sender<()>>,
 }
 
 impl ScreenshotListener {
@@ -32,6 +31,7 @@ impl ScreenshotListener {
         ScreenshotListener {
             path: path.into(),
             handle: None,
+            stop_signal: None,
         }
     }
 
@@ -44,15 +44,21 @@ impl ScreenshotListener {
 
         let path = self.path.clone();
         let (sender, receiver) = channel();
+        let (stop_signal_sx, stop_signal_rx) = channel();
 
+        self.stop_signal = Some(stop_signal_sx);
         self.handle = Some(thread::spawn(move || {
-            Self::screeshot_listener(&path, sender)
+            Self::screeshot_listener(&path, sender, stop_signal_rx)
         }));
 
         receiver
     }
 
     pub fn stop(mut self) -> Result<(), ListenerError<PathBuf>> {
+        if let Some(ref s) = self.stop_signal {
+            s.send(()).unwrap();
+        }
+
         if let Some(h) = self.handle.take() {
             match h.join() {
                 Ok(res) => res,
@@ -66,10 +72,17 @@ impl ScreenshotListener {
     fn screeshot_listener(
         image_path: &Path,
         sender: Sender<PathBuf>,
+        stop_signal: Receiver<()>,
     ) -> Result<(), ListenerError<PathBuf>> {
         let mut images = Self::get_images(image_path)?;
 
         loop {
+            // Stop thread
+            match stop_signal.try_recv() {
+                Ok(_) | Err(TryRecvError::Disconnected) => break,
+                Err(_) => (),
+            }
+
             thread::sleep(time::Duration::from_secs(1));
 
             let new_images = Self::get_images(image_path)?;
@@ -80,11 +93,12 @@ impl ScreenshotListener {
             // refresh images
             images = new_images;
         }
+
+        Ok(())
     }
 
     fn get_images(path: &Path) -> io::Result<HashSet<PathBuf>> {
         let iter = fs::read_dir(path)?
-            .into_iter()
             .filter_map(|p| match p {
                 Ok(val) => Some(val.path()),
                 Err(_) => None,
