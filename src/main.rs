@@ -22,15 +22,30 @@ mod terminal;
 #[command(author, version, about, long_about = None)]
 struct ScreenshotArgs {
     /// Screenshot path
-    #[arg(short, long, default_value = "/home/brendon/Pictures/Screenshots")]
+    #[arg(
+        short,
+        long,
+        value_name = "PATH",
+        default_value = "/home/brendon/Pictures/Screenshots"
+    )]
     screenshot: PathBuf,
 
     /// Notes path
-    #[arg(short, long, default_value = "/home/brendon/uni/appunti")]
+    #[arg(
+        short,
+        long,
+        value_name = "PATH",
+        default_value = "/home/brendon/uni/appunti"
+    )]
     note: PathBuf,
-    // /// If enabled chooses the last screenshot in the `SCREENSHOT` dir
-    // #[arg(short, long)]
-    // last: Option<PathBuf>,
+
+    /// If enabled chooses the last screenshot in the `SCREENSHOT` dir
+    #[arg(short, long, requires = "output")]
+    last: bool,
+
+    /// Output path
+    #[arg(short, long, value_name = "PATH")]
+    output: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -77,21 +92,18 @@ fn get_note_dirs(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
 
 fn move_image(image: &Path, destination_path: &Path, term: &Terminal) -> anyhow::Result<bool> {
     let new_name = term.input(format!(
-        "Choose new new for the file \"{}\"",
+        "Choose new name for the file \"{}\"",
         image.file_name().unwrap().to_string_lossy()
     ))?;
 
     let to = destination_path.join("img").join(new_name);
-    if !term.confirm(format!(
-        "Do you want to move this image to \"{}\"?",
-        to.to_string_lossy()
-    ))? {
+    if !term.confirm("Do you really want to move this image?")? {
         return Ok(false);
     }
 
     fs::rename(image, to.clone()).with_context(|| {
         format!(
-            "Renaming file from: \"{}\" to \"{}\" failed!",
+            "Failed renaming file from: \"{}\" to \"{}\" failed!",
             image.to_string_lossy(),
             to.to_string_lossy()
         )
@@ -148,17 +160,49 @@ fn menu(note_path: &Path, screenshot_listener: Receiver<PathBuf>) -> anyhow::Res
     Ok(())
 }
 
+fn move_last(args: ScreenshotArgs) -> anyhow::Result<()> {
+    let output = args.output.context("\"output\" was not declared!")?;
+
+    let images = ScreenshotListener::get_images(&args.screenshot)
+        .with_context(|| format!("Could not read contents from \"{}\"", output.display()))?;
+
+    let image = images
+        .into_iter()
+        .filter_map(|image| match fs::metadata(&image) {
+            Ok(meta) => {
+                if let Ok(data) = meta.created() {
+                    Some((image, data))
+                } else {
+                    None
+                }
+            }
+            Err(_) => None,
+        })
+        .max_by(|a, b| a.1.cmp(&b.1))
+        .context("No content was present")?
+        .0;
+
+    let term = Terminal::new();
+    move_image(&image, &output, &term)?;
+
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
     let args = ScreenshotArgs::parse();
 
-    let mut listener = ScreenshotListener::new(&args.screenshot);
-    let receiver: Receiver<PathBuf> = listener.listen();
+    if args.last {
+        move_last(args)?;
+    } else {
+        let mut listener = ScreenshotListener::new(&args.screenshot);
+        let receiver: Receiver<PathBuf> = listener.listen();
 
-    let res = thread::scope(|s| s.spawn(move || menu(&args.note, receiver)).join().unwrap());
+        let res = thread::scope(|s| s.spawn(move || menu(&args.note, receiver)).join().unwrap());
 
-    listener.stop()?;
+        listener.stop()?;
 
-    res?;
+        res?;
+    }
 
     Ok(())
 }

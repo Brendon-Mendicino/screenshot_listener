@@ -97,7 +97,7 @@ impl ScreenshotListener {
         Ok(())
     }
 
-    fn get_images(path: &Path) -> io::Result<HashSet<PathBuf>> {
+    pub fn get_images(path: &Path) -> io::Result<HashSet<PathBuf>> {
         let iter = fs::read_dir(path)?
             .filter_map(|p| match p {
                 Ok(val) => Some(val.path()),
