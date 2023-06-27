@@ -2,6 +2,11 @@
 name = "slisten"
 version = "0.1.0"
 edition = "2021"
+authors = ["Brendon Mendicino"]
+readme = "README.md"
+description = "A simple CLI util to move screenshots"
+repository = "https://github.com/Brendon-Mendicino/screenshot_listener"
+license-file = "LICENSE"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

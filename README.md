@@ -1,2 +1,3 @@
-# screenshot_listener
-Easy terminal util to move and rename screeshot.
+# slisten
+
+Easy terminal util to move and rename screeshots.
